@@ -1,0 +1,44 @@
+{
+    "WBUI2": {
+        "settings": {
+            "OpenButton": 0,
+            "HideIcon": true,
+            "HideIconAfter": 30,
+            "IconURL": "https://midnight-vortex.de/wbui/img/logodf.png",
+            "DisableIconText": false,
+            "IconPosition": 0,
+            "IconTextColor": 0,
+            "OpenOnStart": false,
+            "OpenOnStartOnlyNewPlayers": true,
+            "UpdateInterval": 12
+        },
+        "tabs": [
+            {
+                "tab1": {
+                    "layout": 1,
+                    "buttontext": "Willkommen",
+                    "title1": "Wir bedanken uns das sie unseren Server Gejoint sind.",
+                    "text1": "Willkommen in der faszinierenden Welt von Rise of the Darkfall!,\n\nBegib dich auf eine unvergessliche Reise durch die atemberaubenden Landschaften von AsA, die im neuen Glanz erstrahlen.\nEntdecke die fesselnde Region der vielen Karten.\nDie Reise beginnt hier, und wir laden alle Spieler herzlich dazu ein!.\n-----------------------------------------------------------------\n\nDas Rise of the Darkfall Team möchte der Community PVE sowie PvP Server anbieten.\n\nDerzeit arbeiten wir an einem PVE Server Cluster.\nAber keine Angst PvP wird es auch geben wir bauen dies alles nach und nach auf, je nachdem wie groß die Nachfrage ist davon.\n\nDie derzeitigen Raten:\n\n• 4x Zähmrate\n• 2x Sammelrate\n• 2x Erfahrungrate\n• 3x Stappelgröße\n• Verbesserte Aufzuchtswerte\n• Verbesserte Stats beim leveln\n• Kein tribe limit",
+                    "imageurl": "https://midnight-vortex.de/wbui/img/1341356.jpeg"
+                }
+            },
+            {
+                "tab2": {
+                    "layout": 1,
+                    "buttontext": "Server Regeln",
+                    "title1": "Unsere Server Regeln:",
+                    "text1": "Allgemein:\n\nMit dem Betreten unseres Servers akzeptierst du dessen Spielregeln und befolgst die Anweisungen des Adminsteams.\nDein Spieler-, Dino-, und Tribename sollte angemessen sein. Er sollte keine beleidigenden, rassistischen, pornografischen oder sexistischen Andeutungen oder Namensinhalte haben. Dazu gehört auch das kreative Ausschmücken von Zahlen statt Buchstaben etc.. Folgende Namen sind verboten: Admin & Moderator\nJegliche Namen Ingame sind ohne Umlaute ö/ü/ä oder Sonderzeichen zu schreiben.\nJeder Spieler muss sich einen Tribe erstellen um den Ingame Support durch Admins gewährleisten zu können.\n----------\nBauen:\n\nDu kannst eine angemesse große Hauptbase bauen (Renderdistanz/ca Mittel), sowie eine kleinere Wasserbase (wenn du deine Hauptbase NICHT am Wasser hast) oder ein Außenposten.\nTamingfallen oder andere vorübergehende Strukturen sind wieder zeitnah nach Gebrauch abzubauen.\nBauen an den Obelisken, in Caves und in der Nähe von Artefakten ist nicht erlaubt. Auch keine Teleporter oder Betten zum reisen!\nExplorer Notes und Lootdrops müssen zugänglich bleiben.\nSpawnpunkte müssen frei von Strukturen bleiben.\nBasen in diesen Zonen müssen ein offenes Tor (am besten farblich sichtbar) besitzen, damit Spieler nicht eingesperrt sind)\nÖl- und Gaspumpen, sowie Harzsammler sind auf „offen“ zu stellen (da es nicht viele Plätze gibt oder nicht zu viele gebaut werden sollen)\n----------\nDinos:\n\nGezähmte Tiere dürfen nicht auf Aggressiv/Neutral und Wandern gestellt werden und dann außerhalb der Base herumlaufen.\nDas Mutationlimit von 20 darf nicht überschritten werden durch den Bug.\nUm den Diebstahl von Werten zu unter binden müssen die Base Dinos mit werten behalten werden.\nWildtiere zu anderen Basen zu ziehen, um dort Schaden zu verursachen, ist verboten.\nEinen anderen Spieler beim Vorgang des Tamings zu stören oder dies zu verhindern ist nicht erlaubt.\n----------\nSonstiges:\n\nBiberdämme sind komplett zu entleeren, damit neue nach spawnen!\nDinoeier die aus Nestern geklaut werden, dürfen nur gegessen, aber nicht aus dem Inventar gedopt werden (außer zum Brüten in der eigenen Base)",
+                    "imageurl": "https://midnight-vortex.de/wbui/img/1341356.jpeg"
+                }
+            }
+        ],
+        "links": [
+            {
+                "link1": {
+                    "text": "Discord",
+                    "url": "https://discord.gg/d4DkcyzT5f"
+                }
+            }
+        ]
+    }
+}
