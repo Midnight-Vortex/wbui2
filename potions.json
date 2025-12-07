@@ -1,4 +1,7 @@
 {
+  "TP_MODE_BlackList0_WhiteList1": 1,
+  "TP_MODE_PotionsList": "",
+  "DisablePotionsList": "",
   "TP_MaxImprintVal": 1.0,
   "TP_CraftPotion_BuffTime": 120.0,
   "TP_DamagePotion_BuffTime": 60.0,
