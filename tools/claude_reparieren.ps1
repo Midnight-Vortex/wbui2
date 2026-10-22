@@ -1,48 +1,71 @@
 <#
 claude_reparieren.ps1
 Repariert die Claude-Desktop-App, wenn sie nach dem SSD-Tausch nicht mehr startet
-(z.B. "Claude ist offline ... Das Speichergeraet ist moeglicherweise nicht vorhanden").
+(z.B. "Claude ist offline ... Das Speichergeraet ist moeglicherweise nicht vorhanden")
+oder das Claude-Setup mit "AddPackage failed with HRESULT 0x80073D0D" abbricht.
 
-Ursache: Die Programmdateien von Claude lagen auf der alten SSD (E:\WindowsApps).
-Die Daten (Anmeldung, Chats, Einstellungen) liegen auf C: und bleiben erhalten.
+Ursache: Windows hat Claude noch auf der alten SSD (altes E:\WindowsApps)
+eingetragen. Diese Platte ist weg ("offline"), also startet Claude nicht, und
+das Setup bleibt am alten Eintrag haengen. Die Daten (Anmeldung, Chats,
+Einstellungen) liegen auf C: und bleiben erhalten.
 
 Ablauf:
-  1. Claude-Installation pruefen.
+  1. Claude-Eintraege und die alte, fehlende Platte anzeigen.
   2. Claude schliessen und die Daten nach E:\Claude-Datensicherung sichern.
      Die Sicherung wird geprueft, erst dann geht es weiter.
-  3. Die kaputte Installation austragen.
+  3. Alle alten Claude-Eintraege austragen (fuer alle Benutzer, auch halb
+     installierte) und den Eintrag der alten Platte aufraeumen.
   4. claude.ai/download oeffnen. Du installierst Claude neu.
   5. Die gesicherten Daten zurueckspielen.
   6. Claude starten.
   7. Pruefen, ob noch andere Store-Apps kaputt sind (z.B. Outlook).
 
-Die Sicherung bleibt liegen. Adminrechte braucht es nur, falls Windows das
-Austragen sonst verweigert; dann fragt es einmal nach.
+Laeuft mit Adminrechten (fragt beim Start). Die Sicherung bleibt liegen.
+Ein zweiter Lauf ist kein Problem: er nimmt dann die letzte Sicherung.
 
 Start: Rechtsklick auf die Datei > "Mit PowerShell ausfuehren".
 #>
 param(
-    [string]$SicherungsLW = 'E'
+    [string]$SicherungsLW = 'E',
+    [string]$NutzerAppData = $env:LOCALAPPDATA,
+    [string]$NutzerRoaming = $env:APPDATA,
+    [string]$NutzerProfil = $env:USERPROFILE,
+    [string]$NutzerSid = ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
 )
 
-# Die Appx-Befehle gibt es nur in Windows PowerShell 5.1.
-if ($PSVersionTable.PSEdition -eq 'Core') {
-    Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -SicherungsLW $SicherungsLW"
+# ---------------------------------------------------------------- Windows PowerShell + Adminrechte
+$ich = [Security.Principal.WindowsIdentity]::GetCurrent()
+$istAdmin = ([Security.Principal.WindowsPrincipal]$ich).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($PSVersionTable.PSEdition -eq 'Core' -or -not $istAdmin) {
+    if (-not $PSCommandPath) {
+        Write-Host 'Bitte das Skript als Datei speichern und per Rechtsklick > "Mit PowerShell ausfuehren" starten.' -ForegroundColor Red
+        return
+    }
+    $argListe = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -SicherungsLW {1} -NutzerAppData "{2}" -NutzerRoaming "{3}" -NutzerProfil "{4}" -NutzerSid {5}' -f `
+        $PSCommandPath, $SicherungsLW, $NutzerAppData, $NutzerRoaming, $NutzerProfil, $NutzerSid
+    try {
+        Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList $argListe -ErrorAction Stop
+    } catch {
+        Write-Host 'Ohne Administratorrechte geht es nicht. Abgebrochen.' -ForegroundColor Red
+        Read-Host 'Enter zum Schliessen' | Out-Null
+    }
     exit
 }
 
+# ---------------------------------------------------------------- Grundlagen
 $Familie = 'Claude_pzs8sxrjxfjjc'
 $SicherungsLW = $SicherungsLW.Trim().Substring(0, 1).ToUpper()
-$DatenOrdner = Join-Path $env:LOCALAPPDATA "Packages\$Familie"
+$DatenOrdner = Join-Path $NutzerAppData "Packages\$Familie"
 $SicherungsRoot = "$($SicherungsLW):\Claude-Datensicherung"
 $Stempel = Get-Date -Format 'yyyyMMdd_HHmm'
 $Sicherung = Join-Path $SicherungsRoot $Stempel
 $Teile = @('LocalCache', 'LocalState', 'RoamingState')
-$SquirrelOrdner = Join-Path $env:LOCALAPPDATA 'AnthropicClaude'
+$SquirrelOrdner = Join-Path $NutzerAppData 'AnthropicClaude'
 $SquirrelVorher = Test-Path -LiteralPath $SquirrelOrdner
 $Hinweise = New-Object 'System.Collections.Generic.List[string]'
+$Art = $null
 
-$LogOrdner = Join-Path $env:USERPROFILE 'Documents\Codex\SSD-Kopie'
+$LogOrdner = Join-Path $NutzerProfil 'Documents\Codex\SSD-Kopie'
 if (-not (Test-Path -LiteralPath $LogOrdner)) { New-Item -ItemType Directory -Path $LogOrdner -Force | Out-Null }
 $RoboLog = Join-Path $LogOrdner "robocopy_claude_$Stempel.log"
 try { Start-Transcript -Path (Join-Path $LogOrdner "claude_reparieren_$Stempel.txt") -Force | Out-Null } catch { }
@@ -65,11 +88,16 @@ function Abbruch([string]$t) {
 }
 function Frage([string]$t) { return ((Read-Host "$t (J/N)") -match '^\s*[JjYy]') }
 
-function ClaudePaket {
-    Get-AppxPackage -Name 'Claude' -ErrorAction SilentlyContinue | Where-Object { $_.PackageFamilyName -eq $Familie } | Select-Object -First 1
-}
-function PaketHeil($pk) {
+function DateienDa($pk) {
     return ($pk -and $pk.InstallLocation -and (Test-Path -LiteralPath (Join-Path $pk.InstallLocation 'AppxManifest.xml')))
+}
+# Claude fuer diesen Benutzer
+function ClaudePaket {
+    Get-AppxPackage -User $NutzerSid -Name 'Claude' -ErrorAction SilentlyContinue | Where-Object { $_.PackageFamilyName -eq $Familie } | Select-Object -First 1
+}
+# Alle Claude-Eintraege auf dem PC (alle Benutzer, alle Versionen, auch nur bereitgestellte)
+function AlleClaude {
+    @(Get-AppxPackage -AllUsers -Name 'Claude' -ErrorAction SilentlyContinue | Where-Object { $_.PackageFamilyName -eq $Familie })
 }
 function ClaudeProzesse {
     @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
@@ -83,14 +111,15 @@ function ClaudeSchliessen {
     Start-Sleep -Seconds 3
     if ((ClaudeProzesse).Count) { Abbruch 'Claude laesst sich nicht schliessen. Bitte Claude unten rechts im Tray beenden und das Skript neu starten.' }
 }
+# Startet Claude ohne Adminrechte (ueber den Explorer).
 function ClaudeStarten {
     if ($script:Art -eq 'exe') {
-        Start-Process -FilePath (Join-Path $SquirrelOrdner 'claude.exe')
+        Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + (Join-Path $SquirrelOrdner 'claude.exe') + '"')
         return
     }
     $appId = 'Claude'
     try {
-        $m = Get-AppxPackageManifest -Package (ClaudePaket).PackageFullName -ErrorAction Stop
+        $m = Get-AppxPackageManifest -Package (ClaudePaket).PackageFullName -User $NutzerSid -ErrorAction Stop
         $appId = @($m.Package.Applications.Application)[0].Id
     } catch { }
     Start-Process -FilePath 'explorer.exe' -ArgumentList "shell:AppsFolder\$Familie!$appId"
@@ -98,11 +127,11 @@ function ClaudeStarten {
 
 # robocopy: kopiert Ordner samt Inhalt, ueberschreibt Abweichendes, loescht nie. Kann lange Pfade.
 function Robo([string]$Von, [string]$Nach) {
-    $a = @($Von, $Nach, '/E', '/COPY:DAT', '/DCOPY:DAT', '/XJ', '/R:1', '/W:1', '/NP', '/NFL', '/NDL', "/UNILOG+:$RoboLog")
+    $a = @($Von, $Nach, '/E', '/COPY:DAT', '/DCOPY:DAT', '/XJ', '/B', '/R:1', '/W:1', '/NP', '/NFL', '/NDL', "/UNILOG+:$RoboLog")
     & robocopy.exe @a | Out-Null
     return $LASTEXITCODE
 }
-# robocopy-Listenlauf: Gesamtgroesse und was noch fehlt.
+# robocopy-Listenlauf: Gesamtgroesse und ob noch etwas fehlt.
 function RoboPruef([string]$Von, [string]$Nach) {
     $out = @(& robocopy.exe $Von $Nach /L /E /XJ /BYTES /NFL /NDL /NJH /R:0 /W:0)
     $erg = [pscustomobject]@{ Code = $LASTEXITCODE; Bytes = [int64]0 }
@@ -111,19 +140,25 @@ function RoboPruef([string]$Von, [string]$Nach) {
 }
 
 # ---------------------------------------------------------------- 1. Pruefen
-Schritt '1. Claude-Installation pruefen'
-$pk = ClaudePaket
-if ($pk) {
-    Info "Installiert: Claude $($pk.Version)"
-    Info "Programmordner: $($pk.InstallLocation)"
-    if (PaketHeil $pk) {
-        Info 'Die Programmdateien sind da.'
-        if (-not (Frage 'Claude trotzdem neu installieren? Deine Daten werden vorher gesichert und danach zurueckgespielt.')) { Ende 0 }
-    } else {
-        Write-Host '       Die Programmdateien fehlen (sie lagen auf der alten SSD). Deshalb startet Claude nicht.' -ForegroundColor Yellow
+Schritt '1. Claude-Eintraege und alte Platte pruefen'
+$alleClaude = AlleClaude
+if ($alleClaude.Count) {
+    foreach ($p in $alleClaude) {
+        $zustand = 'Dateien da'
+        if (-not (DateienDa $p)) { $zustand = 'Dateien FEHLEN (alte SSD)' }
+        Info ("Claude {0}: {1}  [{2}]" -f $p.Version, $p.InstallLocation, $zustand)
     }
 } else {
-    Info 'Claude ist gerade nicht installiert.'
+    Info 'Claude ist auf diesem PC nicht eingetragen.'
+}
+$offline = @()
+try { $offline = @(Get-AppxVolume -ErrorAction Stop | Where-Object { $_.IsOffline }) } catch { }
+foreach ($v in $offline) { Info "Fehlende Platte fuer Store-Apps: $($v.PackageStorePath) ($($v.Name))" }
+
+$pk = ClaudePaket
+if ($pk -and (DateienDa $pk) -and -not @($alleClaude | Where-Object { -not (DateienDa $_) }).Count) {
+    Info 'Claude sieht vollstaendig aus.'
+    if (-not (Frage 'Claude trotzdem neu installieren? Deine Daten werden vorher gesichert und danach zurueckgespielt.')) { Ende 0 }
 }
 
 # ---------------------------------------------------------------- 2. Sichern
@@ -155,60 +190,118 @@ if (Test-Path -LiteralPath (Join-Path $DatenOrdner 'LocalCache')) {
     $WiederAus = $Sicherung
     Ok "Sicherung geprueft: $Sicherung"
 } else {
-    # Keine aktuellen Daten auf C: (z.B. weil ein frueherer Lauf schon ausgetragen hat): aeltere Sicherungen suchen.
-    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    # Keine aktuellen Daten auf C: (z.B. weil ein frueherer Lauf schon ausgetragen hat): Sicherungen suchen.
     $kandidaten = @()
     $kandidaten += @(Get-ChildItem -LiteralPath $SicherungsRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | ForEach-Object { $_.FullName })
-    $kandidaten += "$($SicherungsLW):\WpSystem\$sid\AppData\Local\Packages\$Familie"
-    $kandidaten += "D:\Game 3 SSD 500GB\WpSystem\$sid\AppData\Local\Packages\$Familie"
+    $kandidaten += "$($SicherungsLW):\WpSystem\$NutzerSid\AppData\Local\Packages\$Familie"
+    $kandidaten += "D:\Game 3 SSD 500GB\WpSystem\$NutzerSid\AppData\Local\Packages\$Familie"
     $WiederAus = $kandidaten | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'LocalCache') } | Select-Object -First 1
     if ($WiederAus) {
-        Warnung "Auf C: sind keine Claude-Daten. Es wird die Sicherung $WiederAus genommen."
+        Ok "Auf C: sind keine Claude-Daten mehr, es wird die Sicherung genommen: $WiederAus"
     } else {
         Warnung 'Keine Claude-Daten gefunden. Claude wird frisch installiert, du musst dich neu anmelden.'
     }
 }
 
-# ---------------------------------------------------------------- 3. Austragen
-Schritt '3. Kaputte Installation austragen'
-$pk = ClaudePaket
-if ($pk) {
-    ClaudeSchliessen
-    $full = $pk.PackageFullName
+# ---------------------------------------------------------------- 3. Austragen und aufraeumen
+Schritt '3. Alte Claude-Eintraege austragen'
+ClaudeSchliessen
+foreach ($p in AlleClaude) {
+    $full = $p.PackageFullName
     try {
-        Remove-AppxPackage -Package $full -ErrorAction Stop
+        Remove-AppxPackage -Package $full -AllUsers -ErrorAction Stop
+        Ok "ausgetragen: $full"
     } catch {
-        Info "Ohne Adminrechte ging es nicht: $($_.Exception.Message)"
+        try {
+            Remove-AppxPackage -Package $full -User $NutzerSid -ErrorAction Stop
+            Ok "ausgetragen (nur dein Benutzer): $full"
+        } catch {
+            Info "$full liess sich so nicht austragen: $($_.Exception.Message)"
+        }
+    }
+}
+Start-Sleep -Seconds 2
+
+# Store-Apps (ohne Claude), deren Programmdateien fehlen, also auf der alten SSD lagen
+function AppsOhneDateien {
+    @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object {
+            $_.PackageFamilyName -ne $Familie -and -not (DateienDa $_)
+        })
+}
+
+# Outlook liegt evtl. auch dort; seine Mails liegen auf dem Server.
+$outlook = @(AppsOhneDateien | Where-Object { $_.Name -eq 'Microsoft.OutlookForWindows' })
+if ($outlook.Count -and (Frage 'Outlook liegt auch noch auf der alten SSD und startet deshalb nicht. Austragen, damit es sich neu installieren laesst? Deine Mails liegen auf dem Server.')) {
+    foreach ($o in $outlook) {
+        try { Remove-AppxPackage -Package $o.PackageFullName -AllUsers -ErrorAction Stop; Ok "ausgetragen: $($o.PackageFullName)" }
+        catch { Info "Outlook liess sich so nicht austragen: $($_.Exception.Message)" }
+    }
+    $Hinweise.Add('Outlook neu installieren: im Microsoft Store "Outlook fuer Windows" suchen und installieren.')
+}
+
+# Haengt Claude noch an der fehlenden Platte, den Eintrag der Platte selbst entfernen.
+# Windows traegt dabei alle Apps aus, die nur noch dort liegen (die starten ohnehin nicht mehr).
+if (@(AlleClaude | Where-Object { -not (DateienDa $_) }).Count) {
+    Info 'Claude haengt noch an der alten SSD. Entferne deren Eintrag fuer Store-Apps ...'
+    if (-not $offline.Count) { Info 'Windows meldet keine fehlende Platte fuer Store-Apps.' }
+    foreach ($v in $offline) {
+        $andere = @(AppsOhneDateien)
+        if ($andere.Count) {
+            Write-Host '       Davon betroffen sein koennen auch diese Apps, deren Programmdateien fehlen (sie starten ohnehin nicht mehr):' -ForegroundColor Yellow
+            foreach ($a in $andere) { Write-Host "         - $($a.Name)" -ForegroundColor Yellow }
+            Info 'Werden sie ausgetragen, gehen ihre Daten verloren; danach installierst du sie neu.'
+            if (-not (Frage 'Weiter?')) { Abbruch "Nicht bestaetigt. Deine Claude-Daten sind gesichert in $WiederAus." }
+        }
+        try { Remove-AppxVolume -Volume $v -ErrorAction Stop; Ok "Eintrag der alten SSD ($($v.PackageStorePath)) entfernt." }
+        catch { Warnung "Eintrag der alten SSD liess sich nicht entfernen: $($_.Exception.Message)" }
     }
     Start-Sleep -Seconds 2
-    if (ClaudePaket) {
-        Info 'Versuche es mit Adminrechten (bitte mit Ja bestaetigen) ...'
-        try {
-            Start-Process -FilePath 'powershell.exe' -Verb RunAs -Wait -ErrorAction Stop `
-                -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"Remove-AppxPackage -Package '$full' -AllUsers`""
-        } catch { }
-        Start-Sleep -Seconds 2
+    foreach ($p in AlleClaude) {
+        if (DateienDa $p) { continue }
+        try { Remove-AppxPackage -Package $p.PackageFullName -AllUsers -ErrorAction Stop; Ok "ausgetragen: $($p.PackageFullName)" } catch { }
     }
-    if (ClaudePaket) { Abbruch "Windows laesst die alte Claude-Installation nicht austragen. Deine Daten sind gesichert in $WiederAus." }
-    Ok 'Alte Installation ausgetragen.'
-} else {
-    Info 'Nichts auszutragen.'
+}
+$rest = @(AlleClaude | Where-Object { -not (DateienDa $_) })
+if ($rest.Count) {
+    Abbruch ("Windows laesst den alten Claude-Eintrag ({0}) nicht austragen, solange die alte SSD fehlt. Deine Daten sind gesichert in {1}. Ausweg: die alte SSD kurz wieder anschliessen (z.B. per USB-Adapter) und das Skript noch mal starten. Oder schick Claude dieses Fenster." -f (($rest | ForEach-Object { $_.PackageFullName }) -join ', '), $WiederAus)
+}
+Ok 'Keine alten Claude-Eintraege mehr.'
+
+foreach ($d in AppsOhneDateien) { Warnung "Store-App '$($d.Name)' liegt noch auf der alten SSD und startet nicht. Liste an Claude schicken, nicht selbst deinstallieren." }
+
+# Neue Store-Apps (und damit auch Claude) auf C: installieren
+try {
+    $sysVol = Get-AppxVolume -ErrorAction Stop | Where-Object { $_.IsSystemVolume } | Select-Object -First 1
+    $defVol = Get-AppxDefaultVolume -ErrorAction Stop
+    if ($sysVol -and $defVol -and $defVol.Name -ne $sysVol.Name) {
+        Set-AppxDefaultVolume -Volume $sysVol -ErrorAction Stop
+        Ok "Neue Store-Apps werden jetzt auf $($sysVol.PackageStorePath) installiert."
+    } else {
+        Ok 'Neue Store-Apps werden auf C: installiert.'
+    }
+} catch {
+    Warnung "Speicherort fuer neue Apps nicht geprueft: $($_.Exception.Message)"
 }
 
 # ---------------------------------------------------------------- 4. Neu installieren
 Schritt '4. Claude neu installieren'
-Info 'Im Browser oeffnet sich claude.ai/download.'
-Info 'Lade dort Claude fuer Windows herunter und installiere es.'
-Info 'Startet Claude danach von selbst, musst du dich noch nicht anmelden.'
-Start-Process 'https://claude.ai/download'
-$Art = $null
+$setup = Join-Path $NutzerProfil 'Downloads\Claude Setup.exe'
+if (Test-Path -LiteralPath $setup) {
+    Info "Starte das Claude-Setup ($setup)."
+    Info 'Fragt Windows nach Adminrechten, mit Ja bestaetigen. Anmelden musst du dich noch nicht.'
+    Start-Process -FilePath 'explorer.exe' -ArgumentList ('"' + $setup + '"')
+} else {
+    Info 'Im Browser oeffnet sich claude.ai/download. Lade dort Claude fuer Windows herunter und starte das Setup.'
+    Info 'Fragt Windows nach Adminrechten, mit Ja bestaetigen. Anmelden musst du dich noch nicht.'
+    Start-Process 'https://claude.ai/download'
+}
 while (-not $Art) {
     $a = Read-Host '       Wenn die Installation fertig ist: Enter druecken (A = Abbruch)'
     if ($a -match '^\s*[Aa]') { Abbruch "Abgebrochen. Deine Daten liegen in $WiederAus. Skript spaeter einfach noch mal starten." }
     $pk = ClaudePaket
-    if (PaketHeil $pk) { $Art = 'msix'; Ok "Claude $($pk.Version) ist installiert."; break }
+    if (DateienDa $pk) { $Art = 'msix'; Ok "Claude $($pk.Version) ist installiert ($($pk.InstallLocation))."; break }
     if (-not $SquirrelVorher -and (Test-Path -LiteralPath (Join-Path $SquirrelOrdner 'claude.exe'))) { $Art = 'exe'; Ok "Claude ist installiert ($SquirrelOrdner)."; break }
-    Write-Host '       Claude ist noch nicht (fertig) installiert.' -ForegroundColor Yellow
+    Write-Host '       Claude ist noch nicht (fertig) installiert. Kam beim Setup ein Fehler? Dann schick Claude ein Bild davon.' -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------- 5. Zurueckspielen
@@ -236,7 +329,7 @@ if (-not $WiederAus) {
     ClaudeSchliessen
     $v = Join-Path $WiederAus 'LocalCache\Roaming\Claude'
     if (Test-Path -LiteralPath $v) {
-        $rc = Robo $v (Join-Path $env:APPDATA 'Claude')
+        $rc = Robo $v (Join-Path $NutzerRoaming 'Claude')
         if ($rc -ge 8) { Warnung "Daten nicht ganz zurueckgespielt (robocopy $rc). Protokoll: $RoboLog" } else { Ok 'Daten nach %APPDATA%\Claude zurueckgespielt.' }
     } else {
         Info 'In der Sicherung sind keine Claude-Daten.'
@@ -250,19 +343,12 @@ Ok 'Claude startet. Fragt es nach der Anmeldung, melde dich einfach an.'
 
 # ---------------------------------------------------------------- 7. Andere Store-Apps
 Schritt '7. Andere Store-Apps pruefen'
-$kaputt = @(Get-AppxPackage -PackageTypeFilter Main, Framework -ErrorAction SilentlyContinue | Where-Object {
-        -not $_.InstallLocation -or -not (Test-Path -LiteralPath (Join-Path $_.InstallLocation 'AppxManifest.xml'))
-    })
+$kaputt = @(Get-AppxPackage -User $NutzerSid -PackageTypeFilter Main, Framework -ErrorAction SilentlyContinue | Where-Object { -not (DateienDa $_) })
 if (-not $kaputt.Count) {
     Ok 'Keine weiteren Store-Apps mit fehlenden Dateien.'
 } else {
     foreach ($k in $kaputt) { Warnung "Store-App '$($k.Name)' hat keine Programmdateien mehr ($($k.InstallLocation))." }
-    if ($kaputt | Where-Object { $_.Name -eq 'Microsoft.OutlookForWindows' }) {
-        Info 'Outlook reparieren (Mails kommen vom Server zurueck):'
-        Info '  Get-AppxPackage Microsoft.OutlookForWindows | Remove-AppxPackage'
-        Info '  winget install --id 9NRX63209R7B --source msstore --accept-package-agreements --accept-source-agreements'
-    }
-    Info 'Andere Apps hier bitte nicht einfach deinstallieren, sondern die Liste an Claude schicken.'
+    Info 'Diese Apps bitte nicht einfach deinstallieren, sondern die Liste an Claude schicken.'
 }
 
 # ---------------------------------------------------------------- Fertig
