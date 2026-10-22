@@ -89,7 +89,15 @@ function Abbruch([string]$t) {
 function Frage([string]$t) { return ((Read-Host "$t (J/N)") -match '^\s*[JjYy]') }
 
 function DateienDa($pk) {
-    return ($pk -and $pk.InstallLocation -and (Test-Path -LiteralPath (Join-Path $pk.InstallLocation 'AppxManifest.xml')))
+    if (-not $pk -or -not $pk.InstallLocation) { return $false }
+    try { return [bool](Test-Path -LiteralPath ([IO.Path]::Combine($pk.InstallLocation, 'AppxManifest.xml')) -ErrorAction Stop) } catch { return $false }
+}
+# Programmdateien fehlen und der Programmordner liegt nicht auf C:, also auf der alten SSD.
+# (Windows fuehrt auch Reste eigener Bausteine ohne Dateien auf C:; die sind normal und harmlos.)
+function AufAlterSsd($pk) {
+    return ($pk -and $pk.InstallLocation -and
+        -not $pk.InstallLocation.StartsWith($env:SystemDrive, [StringComparison]::OrdinalIgnoreCase) -and
+        -not (DateienDa $pk))
 }
 # Claude fuer diesen Benutzer
 function ClaudePaket {
@@ -145,7 +153,8 @@ $alleClaude = AlleClaude
 if ($alleClaude.Count) {
     foreach ($p in $alleClaude) {
         $zustand = 'Dateien da'
-        if (-not (DateienDa $p)) { $zustand = 'Dateien FEHLEN (alte SSD)' }
+        if (AufAlterSsd $p) { $zustand = 'liegt auf der ALTEN SSD' }
+        elseif (-not (DateienDa $p)) { $zustand = 'alter Rest auf C:, stoert nicht' }
         Info ("Claude {0}: {1}  [{2}]" -f $p.Version, $p.InstallLocation, $zustand)
     }
 } else {
@@ -156,7 +165,7 @@ try { $offline = @(Get-AppxVolume -ErrorAction Stop | Where-Object { $_.IsOfflin
 foreach ($v in $offline) { Info "Fehlende Platte fuer Store-Apps: $($v.PackageStorePath) ($($v.Name))" }
 
 $pk = ClaudePaket
-if ($pk -and (DateienDa $pk) -and -not @($alleClaude | Where-Object { -not (DateienDa $_) }).Count) {
+if ($pk -and (DateienDa $pk) -and -not @($alleClaude | Where-Object { AufAlterSsd $_ }).Count) {
     Info 'Claude sieht vollstaendig aus.'
     if (-not (Frage 'Claude trotzdem neu installieren? Deine Daten werden vorher gesichert und danach zurueckgespielt.')) { Ende 0 }
 }
@@ -222,10 +231,10 @@ foreach ($p in AlleClaude) {
 }
 Start-Sleep -Seconds 2
 
-# Store-Apps (ohne Claude), deren Programmdateien fehlen, also auf der alten SSD lagen
+# Store-Apps (ohne Claude), die auf der alten SSD liegen
 function AppsOhneDateien {
     @(Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue | Where-Object {
-            $_.PackageFamilyName -ne $Familie -and -not (DateienDa $_)
+            $_.PackageFamilyName -ne $Familie -and (AufAlterSsd $_)
         })
 }
 
@@ -241,31 +250,31 @@ if ($outlook.Count -and (Frage 'Outlook liegt auch noch auf der alten SSD und st
 
 # Haengt Claude noch an der fehlenden Platte, den Eintrag der Platte selbst entfernen.
 # Windows traegt dabei alle Apps aus, die nur noch dort liegen (die starten ohnehin nicht mehr).
-if (@(AlleClaude | Where-Object { -not (DateienDa $_) }).Count) {
+if (@(AlleClaude | Where-Object { AufAlterSsd $_ }).Count) {
     Info 'Claude haengt noch an der alten SSD. Entferne deren Eintrag fuer Store-Apps ...'
     if (-not $offline.Count) { Info 'Windows meldet keine fehlende Platte fuer Store-Apps.' }
     foreach ($v in $offline) {
         $andere = @(AppsOhneDateien)
         if ($andere.Count) {
-            Write-Host '       Davon betroffen sein koennen auch diese Apps, deren Programmdateien fehlen (sie starten ohnehin nicht mehr):' -ForegroundColor Yellow
+            Write-Host '       Diese Apps liegen auch auf der alten SSD und wuerden mit ausgetragen:' -ForegroundColor Yellow
             foreach ($a in $andere) { Write-Host "         - $($a.Name)" -ForegroundColor Yellow }
-            Info 'Werden sie ausgetragen, gehen ihre Daten verloren; danach installierst du sie neu.'
-            if (-not (Frage 'Weiter?')) { Abbruch "Nicht bestaetigt. Deine Claude-Daten sind gesichert in $WiederAus." }
+            Info 'Dabei gingen ihre Daten verloren. Deshalb hier abbrechen und Claude ein Bild von dieser Liste schicken.'
+            Abbruch "Nichts weiter geaendert. Deine Claude-Daten sind gesichert in $WiederAus."
         }
         try { Remove-AppxVolume -Volume $v -ErrorAction Stop; Ok "Eintrag der alten SSD ($($v.PackageStorePath)) entfernt." }
         catch { Warnung "Eintrag der alten SSD liess sich nicht entfernen: $($_.Exception.Message)" }
     }
     Start-Sleep -Seconds 2
     foreach ($p in AlleClaude) {
-        if (DateienDa $p) { continue }
+        if (-not (AufAlterSsd $p)) { continue }
         try { Remove-AppxPackage -Package $p.PackageFullName -AllUsers -ErrorAction Stop; Ok "ausgetragen: $($p.PackageFullName)" } catch { }
     }
 }
-$rest = @(AlleClaude | Where-Object { -not (DateienDa $_) })
+$rest = @(AlleClaude | Where-Object { AufAlterSsd $_ })
 if ($rest.Count) {
     Abbruch ("Windows laesst den alten Claude-Eintrag ({0}) nicht austragen, solange die alte SSD fehlt. Deine Daten sind gesichert in {1}. Ausweg: die alte SSD kurz wieder anschliessen (z.B. per USB-Adapter) und das Skript noch mal starten. Oder schick Claude dieses Fenster." -f (($rest | ForEach-Object { $_.PackageFullName }) -join ', '), $WiederAus)
 }
-Ok 'Keine alten Claude-Eintraege mehr.'
+Ok 'Claude haengt nicht mehr an der alten SSD.'
 
 foreach ($d in AppsOhneDateien) { Warnung "Store-App '$($d.Name)' liegt noch auf der alten SSD und startet nicht. Liste an Claude schicken, nicht selbst deinstallieren." }
 
